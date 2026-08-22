@@ -1,267 +1,463 @@
 # anam7-avionics
 
-**ANAM VII — 단일단 로켓 에비오닉스 (고려대 고로켓 · Team 3)**
+**Flight computer for the ANAM VII sounding rocket** — Korea University rocketry
+club, Team 3.
 
 ![MicroPython](https://img.shields.io/badge/MicroPython-1.28.0-2b2728)
-![RP2040](https://img.shields.io/badge/MCU-RP2040%20%C2%B7%20Pico-a22846)
-![Flight](https://img.shields.io/badge/flight-%EC%82%AC%EC%B6%9C%20%EC%84%B1%EA%B3%B5-2ea44f)
+![MCU](https://img.shields.io/badge/MCU-RP2040%20%C2%B7%20Pico-a22846)
+![Flight](https://img.shields.io/badge/flight-deployment%20nominal-2ea44f)
 
-Raspberry Pi Pico + MicroPython 기반 소형 로켓 비행 컴퓨터.
-**낙하산 사출 · SD 비행 로깅 · GPS 회수**를 담당한다. 무선 텔레메트리는 없다.
+A single-stage model rocket avionics stack on a Raspberry Pi Pico. It detects
+launch, decides when the vehicle reaches apogee, fires the parachute, logs the
+full flight to SD, and beacons its position over GPS for recovery. No radio
+telemetry — everything is decided onboard.
 
-> *Flight computer for a single-stage model rocket: triple-redundant apogee
-> detection, parachute deployment, onboard CSV logging, and GPS for recovery.
-> MicroPython on RP2040.*
-
-이 저장소의 코드는 **실제 비행에 올라간 그대로**다.
+**The code in this repository is exactly what flew.** Nothing was cleaned up or
+retrofitted after the fact.
 
 ---
 
-## 비행 결과
+## Flight result
+
+Flown once. Honest summary:
 
 | | |
 |---|---|
-| 발사 | 성공 |
-| 발사 인식 (엄빌리컬 3핀 분리) | 정상 동작 |
-| **낙하산 사출** | **성공** |
-| GPS 위성 고정 | 발사대에서 실패 (아래 *알려진 문제* 참조) |
-| 회수 | **실패** — 강풍으로 도랑에 낙하, 기체·SD 미회수 |
-| 비행 데이터 | 없음 (영상만 확보) |
+| Launch | Success |
+| Launch detection (3-pin umbilical release) | Nominal |
+| **Parachute deployment** | **Success** |
+| GPS satellite fix | **Never acquired on the pad** — see *Post-mortem* |
+| Recovery | **Failed** — high winds carried the vehicle into a drainage ditch |
+| Flight data | **None** — airframe and SD card were not recovered; only video |
 
-GPS가 고정되지 않은 상태에서도 **사출 계통은 정상 작동했다.** 정점 감지를
-서로 다른 원리 3개로 독립시켜 둔 설계가 실제로 값을 한 부분이다.
+The deployment chain worked **despite** the GPS never getting a fix. That is the
+one result worth taking away from this project: apogee detection was built from
+three mutually independent detectors, so losing a subsystem did not compromise
+the safety-critical function. Recovery, which depended on a single sensor, is
+exactly what failed.
+
+We have video of the descent under canopy but no telemetry, so every number in
+this README comes from bench measurement and simulation rather than flight data.
+Where that distinction matters, it is stated.
 
 ---
 
-## 하드웨어
+## What is actually interesting here
 
-| 부품 | 연결 |
+Model rocket flight computers are a well-trodden exercise. Three aspects of this
+one are less common, and are documented in detail below:
+
+1. **Verifying a one-shot system with no flight data.** There was exactly one
+   launch and no opportunity to iterate. Deployment thresholds were set by
+   measuring how large a *false* signal ground handling could produce, then
+   placing each threshold in the gap between that and the smallest plausible
+   *real* signal — with the cost of being conservative quantified before it was
+   accepted, rather than assumed to be free.
+   → [Setting the thresholds](#setting-the-thresholds-without-flight-data)
+
+2. **Redundancy that degrades gracefully.** Apogee detection runs three
+   detectors built on different physical principles, any one of which is
+   sufficient on its own. They cross-check each other, and a detector that
+   observes its own preconditions being violated — accelerometer saturation,
+   integrator drift — disables itself rather than continuing to vote with
+   corrupted data.
+   → [Deployment triggers](#deployment-triggers)
+
+3. **Prediction as a gate, never as a trigger.** The IMU detector computes a
+   time-to-apogee estimate but will not fire on it. The estimate only decides
+   when to begin testing for the measured event.
+   → [Deployment triggers](#deployment-triggers)
+
+The vehicle was lost, so this repository is as much an anomaly report as a
+firmware release. The failure — a GNSS receiver desensed by a co-located digital
+subsystem, mitigated in firmware, and still insufficient at the launch site — is
+written up in full rather than omitted.
+   → [Post-mortem](#post-mortem--known-issues)
+
+---
+
+## Hardware
+
+| Component | Interface |
 |---|---|
-| **BMP388** 기압계 | I2C0 — SDA `GP0` / SCL `GP1` |
-| **BNO055** IMU | I2C1 — SDA `GP2` / SCL `GP3` (AMG 비융합 모드, ±16g) |
-| **BE-220** GPS | UART1 — TX `GP4` / RX `GP5`, 115200 baud |
+| **BMP388** barometer | I2C0 — SDA `GP0` / SCL `GP1` |
+| **BNO055** IMU | I2C1 — SDA `GP2` / SCL `GP3` (AMG non-fusion mode, ±16 g) |
+| **BE-220** GNSS | UART1 — TX `GP4` / RX `GP5`, 115200 baud |
 | **MicroSD** | SPI1 — SCK `GP10` / MOSI `GP11` / MISO `GP12` / CS `GP13` |
-| 엄빌리컬 SAFE / POGO1 / POGO2 | `GP17` / `GP18` / `GP19` (풀업, 체결 시 LOW) |
-| 부저 (TMB12A05 + 2N3904) | `GP20` (액티브 하이) |
-| 낙하산 서보 | `GP26` (직결, 비반전 PWM 50 Hz) |
+| Umbilicals SAFE / POGO1 / POGO2 | `GP17` / `GP18` / `GP19` (pull-up; mated = LOW) |
+| Buzzer (TMB12A05 + 2N3904) | `GP20` (active high) |
+| Parachute servo | `GP26` (direct drive, non-inverting, 50 Hz PWM) |
 
-**전원 레일 2개** — 이 구분이 고장 진단에 중요하다.
+**Two independent power rails.** This split matters for fault diagnosis — several
+confusing failures turned out to be one rail being off:
 
-- **3.7V** → Pico VSYS → 내부 3.3V → BMP388 · BNO055 · SD · 풀업
-- **5V** → GPS · 서보 · 부저
+- **3.7 V** → Pico VSYS → internal 3.3 V → BMP388 · BNO055 · SD · pull-ups
+- **5 V** → GNSS · servo · buzzer
 
 ---
 
-## 비행 상태 기계
+## Flight state machine
 
 ```
-Stage 0  대기      엄빌리컬 3개 체결. 기준값(기압·중력방향·자이로영점) 계속 갱신
-   ↕               안전핀을 다시 꽂으면 Stage 0 으로 되돌아감
-Stage 1  무장      안전핀(SAFE) 분리
+Stage 0  PAD        All 3 umbilicals mated. References (pressure, gravity
+   ↕                vector, gyro bias) continuously re-zeroed.
+                    Re-inserting the safety pin returns here.
+Stage 1  ARMED      Safety pin (SAFE) pulled.
    ↓
-Stage 2  비행      엄빌리컬 3개 분리 = 발사 인식 (되돌릴 수 없음)
-   ↓               기준값 동결 · 자세 0도 리셋 · 타이머 시작
-Stage 3  사출 후   서보 사출 → 5초 뒤 잠금 복귀 → 착륙 비콘
+Stage 2  FLIGHT     All 3 umbilicals released = launch detected. Latched;
+   ↓                cannot revert. References frozen, attitude reset to 0°,
+                    mission clock starts.
+Stage 3  DEPLOYED   Servo releases → re-locks after 5 s → landing beacon.
 ```
 
-**안전 규칙:** 부팅 후 엄빌리컬이 **체결된 상태를 한 번이라도 관측**해야 발사로
-인정한다. 엄빌리컬을 꽂지 않고 전원을 켜면 발사불가(IDLE) 상태가 되어, 아무리
-흔들어도 사출되지 않는다.
+**Safety interlock:** the board must observe the umbilicals *mated* at least once
+after boot before it will accept a launch. Powering up with the umbilicals
+already disconnected puts it in a permanent NO-LAUNCH state — no amount of
+handling will deploy the parachute.
+
+This came from a real near-miss on the bench: "all three umbilicals open" alone
+is indistinguishable from "sitting on a table, never plugged in," and the early
+firmware would happily fire the parachute four seconds after power-on.
 
 ---
 
-## 사출 트리거 (셋 중 하나라도 만족하면 사출)
+## Deployment triggers
 
-모두 **T+2,525 ms**(TMS 실측 연소 종료) 이후에만 판정한다.
+Three detectors run in parallel. **Any one** of them fires the parachute. All are
+gated behind **T+2,525 ms**, the measured motor burn time — nothing can deploy
+during thrust.
 
-### ① 기압계 정점 — `logic_bmp.py`
+### 1. Barometric apogee — `logic_bmp.py`
+
 ```
-새 샘플만 사용(중복 방지) → 중앙값 5 → 이동평균 10
-→ 최고 고도 대비 1.5 m 낮은 상태가 5회 연속 → 사출
+fresh samples only (no duplicate processing)
+  → median-of-5  → moving average of 10
+  → 5 consecutive samples ≥ 1.5 m below peak altitude   → FIRE
 ```
 
-### ② IMU 연직속도 — `logic_bno.py` (기압계와 완전히 독립)
-```
-① 상승 확인   최고속도 ≥ 10 m/s
-② coast 확인  감속 ≤ -0.5 m/s² 가 800 ms 지속
-③ 정점 게이트 남은시간 v/|a| ≤ 500 ms 이면 음수속도 검사 개방
-④ 하강 확인   속도 ≤ -2.5 m/s 가 200 ms 지속  → 사출
-```
-**예상 정점은 사출 판정이 아니라 "검사를 언제 열지"만 정한다.** 예측은 틀릴 수
-있으므로, 실제로 측정되는 사건(연직속도가 음수로 유지됨)을 최종 근거로 삼는다.
+The fresh-sample gate matters: the sensor ODR and the main loop are not
+synchronised, so a naive read can process the same measurement twice. Duplicates
+would let the "5 consecutive drops" confirmation be satisfied by fewer real
+samples than intended, quietly loosening the criterion.
 
-### ③ 백업 — `logic_backup.py`
-```
-ㄱ) 120 m 를 넘은 적이 있고 && T+4,000 ms 경과 && 지금 120 m 이하
-ㄴ) T+9,000 ms 무조건 사출   (고도를 못 읽어도 동작하는 최후 수단)
-```
-**"넘은 적 있음" 래치가 핵심이다.** 이게 없으면 정점이 120 m 근처인 비행에서
-**상승 중에** 조건이 참이 되어(정점 119 m 로켓은 T+4 s에 109 m를 14 m/s로 *올라가는*
-중) 낙하산을 상승 중에 터뜨린다. 설계 중 실제로 발견한 위험이었다.
+### 2. IMU vertical velocity — `logic_bno.py`
 
-### 교차검증
-기압 미분 속도와 IMU 적분 속도가 **20 m/s 이상 1초간 어긋나면** ②를 자동 해제한다.
-적분이 드리프트했다는 뜻이므로 조기 사출을 막는다. ①③은 그대로 살아있다.
+Fully independent of the barometer — different sensor, different physical
+principle, different failure modes.
+
+```
+① ascent confirmed    peak velocity ≥ 10 m/s
+② coast confirmed     deceleration ≤ −0.5 m/s² sustained for 800 ms
+③ apogee gate         time-to-apogee  v/|a| ≤ 500 ms  →  open the descent test
+④ descent confirmed   velocity ≤ −2.5 m/s sustained for 200 ms   → FIRE
+```
+
+**Step ③ is a gate, not a trigger.** The predicted apogee only decides *when to
+start testing for descent*; the vehicle is never deployed on a prediction. The
+final evidence is always a measured event — vertical velocity going and staying
+negative.
+
+This was a deliberate revision. An earlier design fired directly on `v/|a|`,
+which fails because that expression assumes constant deceleration. Just after
+burnout, velocity is at its maximum and so is drag, so `|a|` is at its
+*largest* — the coast phase gets underestimated and the parachute opens while
+still climbing. Simulation across light/medium/heavy vehicles put deployment at
++19.2 / +13.2 / +6.1 m/s of residual ascent velocity.
+
+Recomputing the estimate every cycle fixes the bias on its own: as the vehicle
+slows, drag falls away, `|a| → g`, and the constant-deceleration assumption
+becomes true precisely when it is being relied on.
+
+Acceleration is low-pass filtered at 10 Hz and integrated with the trapezoidal
+rule. If the accelerometer is ever observed to saturate, the detector
+invalidates itself rather than trusting a corrupted integral.
+
+### 3. Altitude/time backup — `logic_backup.py`
+
+```
+(a) altitude exceeded 120 m at some point
+    && T+4,000 ms elapsed
+    && altitude now ≤ 120 m                              → FIRE
+(b) T+9,000 ms unconditionally    (works even with no altitude data at all)
+```
+
+**The "has exceeded" latch is the whole point.** Without it, a flight whose
+apogee lands near 120 m satisfies the condition *on the way up* — a vehicle
+peaking at 119 m is passing 109 m at T+4 s while still climbing at 14 m/s. It
+would blow the parachute under thrust-off ascent load, and worse, it would
+pre-empt the two detectors that were about to get it right. Found in simulation
+during design review, not in flight.
+
+Backstop (b) exists for the opposite case: a motor underperforming badly enough
+that 120 m is never reached. It is timed to the simulated apogee (7.15 s from
+OpenRocket) plus margin. The asymmetry is deliberate — deploying early destroys
+the parachute and the vehicle comes down ballistic, while deploying late only
+means a harder canopy load.
+
+### Cross-check between detectors
+
+Barometric-derivative velocity and IMU-integrated velocity are compared
+continuously. If they disagree by **more than 20 m/s for 1 second**, detector 2
+disables itself — that pattern means the integral has drifted, and a drifted
+integral deploys early. Detectors 1 and 3 stay live.
+
+Bench-measured drift was far below this: 0.02 m/s over 18 seconds at rest.
 
 ---
 
-## 부저 신호
+## Audio status codes
 
-| 소리 | 리듬 | 의미 |
+There is no radio link, so the buzzer is the only channel between the flight
+computer and the pad crew. Every state has a distinct rhythm.
+
+| Rhythm | Pattern | Meaning |
 |---|---|---|
-| 삐삐삐삐삐 | 짧게 5번 반복 | **센서 고장 — 발사 금지** |
-| 삐——— | 하나가 뚝 떨어져서 | 센서 정상, GPS 위성 대기중 |
-| 삐—삐— | **둘이 붙어서** | **전부 준비 완료 — 발사 가능** |
-| 삐- 삐- | 0.2초 켜짐 / 0.4초 쉼 | Stage 0 대기 |
-| 삐빅 삐빅 삐빅 | 3번 후 1초 쉼 | Stage 1 무장, 준비 완료 |
-| 빠른 삐삐삐 | 쉼 없이 계속 | Stage 1 무장, GPS 미고정 |
-| 삐— 삐— | 0.6초씩 느리게 | Stage 3 착륙 비콘 |
-| 2.4초마다 톡 | | 발사불가 — 엄빌리컬 미체결로 부팅 |
+| 5 short pips, repeating | 130 ms × 5 | **Sensor fault — DO NOT LAUNCH** |
+| One long tone, isolated | 800 ms on, 2200 ms off | Sensors OK, waiting on GPS fix |
+| **Two long tones, paired** | 600·250·600, 2000 off | **All checks passed — cleared to launch** |
+| Slow pips | 200 ms on / 400 ms off | Stage 0, on the pad |
+| Triple chirp, then pause | 120·100·120 ×3, 1 s off | Stage 1 armed, ready |
+| Fast continuous pips | 100 ms on / 150 ms off | Stage 1 armed, **no GPS fix** |
+| Slow long tones | 600 ms on / 600 ms off | Stage 3, landing beacon |
+| Single tick every 2.4 s | 60 ms | NO-LAUNCH — booted without umbilicals |
 
-결과음은 **횟수가 아니라 리듬으로 구분**한다. 정해진 시간 동안 반복 재생되므로
-"몇 번 울렸나"로는 셀 수 없기 때문이다.
+**Status codes are distinguished by rhythm, never by count.** An earlier version
+encoded faults as "N beeps" — this is unusable in practice, because the pattern
+repeats for a fixed window and there is no way to tell where one repetition ends
+and the next begins. Field feedback during a rehearsal was simply "I heard three
+long beeps," which the code had no way to mean.
 
-부저는 **10 ms 하드웨어 타이머**로 재생한다. 메인 루프는 SD 쓰기·GPS 파싱 때문에
-주기가 25~45 ms로 흔들려서, 루프에서 갱신하면 리듬이 그대로 일그러진다.
+The buzzer is driven from a **10 ms hardware timer**, not the main loop. The
+main loop jitters between 25 and 45 ms depending on SD writes and GPS parsing,
+which is enough to mangle a 120 ms chirp beyond recognition.
+
+That decoupling has a safety consequence worth stating: because the buzzer keeps
+playing even if the main loop dies, a hung flight computer *sounds perfectly
+healthy*. This is the specific reason the watchdog was kept (see
+[Design notes](#design-notes)).
 
 ---
 
-## 임계값을 정한 방법
+## Setting the thresholds without flight data
 
-실제 발사는 한 번뿐이라 날려보고 튜닝할 수 없다. 그래서 **지상 오검출 시험**으로
-"가짜 신호가 어디까지 커지는지"를 재고, 임계값을 그 바깥에 두었다.
+We had one launch. There was no possibility of flying, examining the data, and
+adjusting — the thresholds had to be right the first time.
 
-`tools/falsetest.py` 로 5가지 동작(정지 / 직선 상하 / 좌우 흔들며 상승 /
-연직 S자 / 회전만)을 반복하며 최악값을 측정했다.
+The approach: rather than guessing what a real flight looks like, measure what a
+*fake* flight looks like. `tools/falsetest.py` runs the exact flight-code
+pipeline on the bench while the board is deliberately abused by hand — five
+routines covering stationary, straight vertical translation, ascent with lateral
+shake, vertical S-curves, and pure rotation. Each run reports the largest false
+signal it produced at every stage of the detection chain.
 
-| 임계값 | 확정 | 지상 가짜신호 최악 | 여유 | 실제 비행 신호 대비 |
+Each threshold is then placed in the gap between the worst false signal below it
+and the smallest plausible real signal above it:
+
+| Threshold | Set to | Worst false signal (ground) | Margin above false | Margin below real flight |
 |---|---|---|---|---|
-| `IMU_MIN_SPEED` | 10 m/s | +2.83 m/s | 3.5배 | 6.3배 아래 |
-| `IMU_DECEL_HOLD_MS` | 800 ms | 452 ms | 1.8배 | 7.1배 아래 |
-| `IMU_NEG_SPEED_MPS` | −2.5 m/s | −1.78 m/s | 1.4배 | 12배 아래 |
-| `IMU_NEG_HOLD_MS` | 200 ms | 126 ms | 1.6배 | 15배 아래 |
+| `IMU_MIN_SPEED` | 10 m/s | +2.83 m/s | 3.5× | 6.3× |
+| `IMU_DECEL_HOLD_MS` | 800 ms | 452 ms | 1.8× | 7.1× |
+| `IMU_NEG_SPEED_MPS` | −2.5 m/s | −1.78 m/s | 1.4× | 12× |
+| `IMU_NEG_HOLD_MS` | 200 ms | 126 ms | 1.6× | 15× |
 
-**교훈:** 오검출 시험은 "평소처럼"이 아니라 **일부러 깨뜨리려는 강도**로 해야 한다.
-살살 흔든 1차 시험에서는 가짜 음수속도가 −0.52 m/s였는데, 격하게 흔든 시험에서는
-−1.78 m/s로 **3.4배**가 나왔다. 살살 한 데이터만 믿었으면 비행 중 오사출할
-뻔했다.
+**The most useful thing we learned: false-trigger testing must be adversarial,
+not representative.** The first round shook the board the way we imagined it
+would be handled, and produced a worst-case false negative velocity of
+−0.52 m/s. A later round, run with the explicit goal of *breaking* the detector,
+produced −1.78 m/s — 3.4× larger, and past the threshold that had been set from
+the gentle data. The gentle numbers would have shipped a detector that could
+false-trigger in flight.
 
----
+That round also exposed a genuine defect rather than just a loose number: the
+false descent signal persisted for 126 ms against a 150 ms hold requirement — a
+margin of a single loop iteration. The run did not deploy, but only because an
+earlier stage happened to block it; in a real flight that earlier stage
+necessarily passes, leaving the 24 ms margin as the sole line of defence. All
+four thresholds were raised in response.
 
-## 저장소 구성
-
-```
-main.py            비행 메인 루프 (상태 기계 · 센서 폴링 · 사출 판단 · 로깅)
-config.py          모든 튜닝값. 핀맵부터 임계값까지 여기 한 곳에 모았다
-
-bmp388.py          기압계 드라이버 (Bosch 부동소수 보정, ERR/PWR 레지스터 검증)
-bno055.py          IMU 드라이버 (AMG 비융합 모드, 페이지1 레지스터로 ±16g)
-gps.py             NMEA 파서 (GGA/RMC)
-sdcard.py          SD SPI 블록 디바이스
-sdlog.py           CSV 로거 (23열, 이어쓰기, 주기 커밋)
-
-attitude.py        쿼터니언 자세 적분 + 기울기각 + 좌표 회전
-velocity.py        기압고도 최소자승 미분 → 속도 (교차검증용)
-
-logic_bmp.py       ① 기압계 정점 감지
-logic_bno.py       ② IMU 연직속도 정점 감지
-logic_backup.py    ③ 고도/시간 백업
-
-stage_io.py        엄빌리컬 3핀 디바운스 → 스테이지 판정
-buzzer.py          10 ms 타이머 기반 패턴 재생 (무할당 콜백)
-servo_release.py   낙하산 서보 (사출 후 자동 재잠금)
-
-tools/             지상 시험 도구 (비행에는 올리지 않아도 됨)
-```
-
-`bno055.py` 는 `imu_cal.py` 가 있으면 자동으로 불러 6면 보정을 적용한다. 없으면
-무보정으로 동작한다 — **이번 비행에는 없었다.**
+The cost of being conservative was quantified before accepting it: simulation
+puts deployment at apogee **+0.56 to +0.60 s** across barometric noise and ±15%
+thrust variation, versus +0.38 s with looser values. That is 1.8 m of altitude
+and a 3× higher canopy load — acceptable, given that the failure mode on the
+other side is a destroyed parachute and a ballistic descent.
 
 ---
 
-## 설치
+## Repository layout
+
+```
+main.py            Flight loop: state machine, sensor polling, deployment
+                   decision, logging
+config.py          Every tunable in one place — pinmap through thresholds
+
+bmp388.py          Barometer driver (Bosch float compensation, ERR/PWR
+                   register validation)
+bno055.py          IMU driver (AMG non-fusion mode, ±16 g via page-1 registers)
+gps.py             NMEA parser (GGA/RMC), non-blocking
+sdcard.py          SD SPI block device
+sdlog.py           CSV logger (23 columns, append mode, periodic commit)
+
+attitude.py        Quaternion attitude integration, tilt angle, frame rotation
+velocity.py        Least-squares differentiation of barometric altitude
+                   (independent velocity estimate for cross-checking)
+
+logic_bmp.py       Detector 1 — barometric apogee
+logic_bno.py       Detector 2 — IMU vertical velocity
+logic_backup.py    Detector 3 — altitude/time backup
+
+stage_io.py        3-pin umbilical debounce → stage decision
+buzzer.py          Timer-driven pattern playback (allocation-free callback)
+servo_release.py   Parachute servo with automatic re-lock
+
+tools/             Ground test utilities (not required on the flight board)
+```
+
+`bno055.py` will load `imu_cal.py` and apply a six-face static calibration if
+that file is present, falling back to uncalibrated operation otherwise. **It was
+deliberately absent for this flight** — see [Design notes](#design-notes).
+
+---
+
+## Installation
 
 ```bash
-# MicroPython 펌웨어를 먼저 굽고 (RPI_PICO ...uf2)
+# Flash MicroPython first (RPI_PICO ... .uf2), then:
 py -m mpremote connect COM<n> fs cp *.py :
 ```
 
-MicroPython은 서브폴더 모듈을 자동으로 찾지 않는다. `tools/` 안의 파일도 쓸 때는
-**보드 루트에 평평하게** 올려야 한다.
+MicroPython does not resolve modules in subdirectories. Files from `tools/` must
+be copied to the board root when used:
 
 ```bash
 py -m mpremote connect COM<n> fs cp tools/bench.py :
 ```
 
-**SD 카드는 FAT32여야 한다** (MicroPython은 exFAT을 못 읽는다).
-로그는 `/sd/flight.csv` 에 **이어붙이므로** 매번 포맷할 필요가 없다. 부팅마다
-`==== BOOT ====` 구분선이 들어가 세션이 나뉜다.
+**The SD card must be FAT32** — MicroPython cannot read exFAT.
+
+Logs are **appended** to `/sd/flight.csv`, so the card does not need reformatting
+between runs. Each power-up writes a `==== BOOT ====` separator to delimit
+sessions.
 
 ---
 
-## 지상 시험 도구 (`tools/`)
+## Ground test tools (`tools/`)
 
-| 파일 | 용도 |
+| File | Purpose |
 |---|---|
-| `bench.py` | 센서·SD·GPS 개별 점검, **`bench.axis()`** 로 IMU 축·부호 자동 판별 |
-| `falsetest.py` | 오검출 시험. 비행과 동일한 파이프라인을 돌려 임계값 확정 |
-| `groundtest.py` | 부저·상태 전환 리허설 (`sounds()` / `run()`) |
-| `servocal.py` | 서보 잠금/사출 각 찾기. 중립에서 25 µs씩 램프 이동 |
-| `gpssky.py` | GPS 수신 품질(위성별 SNR) 측정 |
-| `imu_calibrate_6face.py` | 6면 정적 가속도 보정 (선택 — 이번 비행에는 미적용) |
-| `flightstate.py` | 재부팅 복구용 상태 저장 (선택 — 이번 비행에는 미사용) |
+| `bench.py` | Per-subsystem checkout. **`bench.axis()`** determines IMU axis and sign automatically and prints the `config.py` lines to paste. |
+| `falsetest.py` | Adversarial false-trigger testing through the real flight pipeline — how the thresholds above were set. |
+| `groundtest.py` | Audio and state-transition rehearsal (`sounds()` / `run()`). |
+| `servocal.py` | Finds lock/release servo angles. Ramps 25 µs at a time from neutral; never jumps. |
+| `gpssky.py` | GNSS reception quality — per-satellite SNR. |
+| `imu_calibrate_6face.py` | Six-face static accelerometer calibration (optional, unused in flight). |
+| `flightstate.py` | Persistent state for reboot recovery (optional, unused in flight). |
 
 ---
 
-## 알려진 문제 / 다음에 고칠 것
+## Post-mortem / known issues
 
-### 1. SD 카드와 GPS 상호간섭 ★
-**SD가 동작하면 GPS가 위성을 못 잡고, SD를 빼면 잘 잡혔다.** SD 인터페이스의 SPI
-노이즈가 GPS L1(1575 MHz, −130 dBm급) 수신을 묻어버리는 디센스 현상이다.
+### 1. GNSS desense from the co-located SD interface ★ — root cause of the loss
 
-대응으로 **발사 전에는 SD 기록을 초당 1회로 낮추고 커밋을 10초로 늘렸다**
-(`SD_PAD_LOG_MS`, `SD_PAD_FLUSH_MS`). GPS는 획득이 추적보다 훨씬 어려우므로,
-발사대에서 조용히 잡아두면 비행 중 노이즈가 있어도 추적은 유지된다는 판단이었다.
+**With the SD card active, the GNSS module could not acquire a fix. With the
+card removed, it acquired reliably.** The relationship was clean and repeatable.
 
-**그럼에도 발사장에서는 끝내 고정하지 못했다.** 소프트웨어만으로는 부족했다.
-다음에는 **GPS 안테나를 SD 모듈·배선에서 물리적으로 떼어놓고 차폐**해야 한다.
+This is receiver desense: broadband noise from the SD SPI interface raising the
+noise floor at GPS L1 (1575 MHz), where the signal of interest arrives at around
+−130 dBm.
 
-### 2. 64 GB SDXC 카드 비호환
-MicroPython의 단순 SPI 드라이버(`sdcard.py`)가 64 GB 카드 초기화에 실패했다
-(`timeout waiting for v2 card` — CMD0·CMD8은 응답하나 ACMD41이 완료되지 않음).
-PC 리더기에서는 정상 동작하는 카드였다. **32 GB 이하 카드를 쓸 것.**
-로그는 비행당 2 MB 남짓이라 용량은 문제되지 않는다.
+The mitigation was to make the board quiet while it matters most — on the pad,
+logging drops to 1 Hz and commits stretch to 10 s (`SD_PAD_LOG_MS`,
+`SD_PAD_FLUSH_MS`), roughly a 23× reduction in SPI activity, reverting to full
+rate the instant launch is detected. The reasoning was that acquisition is far
+harder than tracking, so a fix obtained in the quiet period should survive the
+noisy one.
 
-### 3. 서보 보류 전류
-낙하산을 장전하면 서보가 스프링 장력에 맞서 계속 힘을 쓴다. GPS·부저와 **같은 5V
-레일**이라 서로 영향을 준다. 소프트웨어로는 해결할 수 없다 — **기구를 self-locking
-래치로 만들어 서보가 하중을 받지 않게** 하는 것이 근본 대책이다.
+**It was not enough. No fix was ever acquired at the launch site**, and without
+coordinates the vehicle could not be located after it landed off-target.
 
-사출 후에는 `SERVO_RELOCK_MS`(5초) 뒤에 잠금 각으로 되돌려 착륙 후 전류를 아낀다.
+This is a layout problem being papered over in firmware. The correct fix is
+physical: move the GNSS antenna away from the SD module and its traces, and
+shield it. Any future revision of this board should treat antenna placement as a
+routing constraint, not an afterthought.
 
-### 4. 회수
-**이번 실패의 직접 원인은 강풍이었다.** GPS 좌표가 없는 상태에서 기체가 도랑에
-떨어져 찾지 못했다. 다음에는 GPS 수신 확보와 별개로 **눈에 띄는 도색·리본, 더 큰
-착륙 비콘 음량** 같은 물리적 회수 수단을 함께 갖추는 편이 낫다.
+### 2. 64 GB SDXC incompatibility
+
+The standard MicroPython SPI driver fails to initialise 64 GB cards —
+`timeout waiting for v2 card`. CMD0 and CMD8 respond normally, so the wiring is
+sound; `ACMD41` simply never completes. The same card is healthy in a PC reader.
+
+**Use cards ≤ 32 GB.** A full flight log is about 2 MB, so capacity is not a
+consideration.
+
+### 3. Servo holding current
+
+With the parachute loaded, the servo works continuously against spring tension.
+It shares the 5 V rail with the GNSS module and buzzer, so that current draw is
+not isolated from the subsystem that most needs a clean supply.
+
+This cannot be solved in firmware — a standard servo offers no way to reduce
+holding torque while commanded to a position. The real fix is mechanical: a
+self-locking latch, so the servo sets the mechanism rather than holding the load.
+
+Firmware does what it can at the other end: `SERVO_RELOCK_MS` returns the servo
+to the lock angle 5 s after deployment, so it is not straining against a travel
+limit for the entire descent and post-landing beacon period.
+
+### 4. Recovery had no redundancy
+
+The proximate cause of the loss was wind. The underlying cause is that recovery
+depended entirely on GPS, and GPS had failed — leaving no fallback at all. The
+deployment path was triple-redundant; the recovery path was not redundant at
+all, and that is where the mission was lost.
+
+Future builds should carry recovery aids that do not depend on any electronics:
+high-visibility finish, streamers, and a louder landing beacon.
 
 ---
 
-## 설계 노트
+## Design notes
 
-- **BNO055는 융합 모드를 쓰지 않는다.** 융합 모드는 가속도 레인지가 ±4g로 강제되어
-  연소 중(약 6g, 피크 10g+) 포화한다. AMG 비융합 + ±16g로 쓰고, 자세는 자이로
-  **쿼터니언** 적분으로 직접 구한다. 로켓은 스핀하므로 단순 2축 적분은 롤 커플링
-  때문에 크게 틀어진다(스핀 200 dps + 피치 4 dps에서 정답 2.24° vs 단순적분 40.08°).
+- **The IMU does not run in fusion mode.** BNO055 fusion output forces a ±4 g
+  accelerometer range; this vehicle pulls roughly 6 g during burn with peaks
+  above 10 g, so fusion output saturates exactly when it is needed. Worse, the
+  fusion filter interprets sustained thrust as gravity and corrupts the attitude
+  estimate along with it. The driver runs AMG (non-fusion) at ±16 g and attitude
+  is integrated from raw gyro instead.
 
-- **연직 성분은 로켓 축이 아니라 실측 중력 방향에 투영한다.** 발사대에서 3축
-  가속도 평균으로 중력 벡터를 구해 두고, 비행 중에는 자세로 회전시킨 뒤 그 방향
-  성분만 뽑는다. 축 하나만 쓰면 X/Y 바이어스와 발사대 기울기가 보정되지 않는다.
+- **Attitude is integrated as a quaternion,** not as independent per-axis angles.
+  Rockets roll, and roll couples the pitch and yaw rates in a way naive
+  integration cannot represent. At 200 dps spin with 4 dps pitch, the correct
+  answer is 2.24° while naive two-axis integration reports 40.08° — an 18×
+  error. Validated against an independent 2 kHz DCM implementation: maximum
+  divergence 0.18°.
 
-- **워치독은 유지하되 재부팅 복구는 뺐다.** 워치독은 '발사 전 멈춤'을 구제한다
-  (부저가 타이머로 돌기 때문에 루프가 멈춰도 소리는 계속 나서 사람이 눈치챌 수
-  없다). 재부팅 복구는 가장 덜 검증된 코드 경로이고 실제로 사고를 냈던 적이 있어
-  제외했다 — 배터리 커넥터가 단단하고 커패시터가 있다는 전제.
+- **Vertical acceleration is projected onto the measured gravity vector,** not
+  read off a body axis. The three-axis gravity vector is averaged on the pad;
+  in flight the body-frame acceleration is rotated by the current attitude and
+  projected onto it. Using a single axis leaves X/Y accelerometer bias
+  uncorrected and ignores pad tilt — the measured pad gravity vector on this
+  board was (−0.042, −0.541, +9.733), so the Y component alone was 0.54 m/s².
 
-- **기압계는 새 샘플일 때만 처리한다.** 센서 ODR과 메인 루프는 동기화되어 있지
-  않아 같은 값을 중복 처리할 수 있고, 그러면 "5회 연속 하강" 확인이 실제보다 적은
-  샘플로 채워져 사출 판정이 헐거워진다.
+- **Watchdog kept, reboot recovery removed.** These are normally a pair, and
+  splitting them was a deliberate call specific to this mission profile. Reboot
+  recovery was the least exercised path in the system and had already caused an
+  anomaly — a servo jumping to the deployed position on power-up, from stale
+  persisted state. Against that, the exposure it covered was a brownout during a
+  **ten-second** powered flight, on a vehicle with a solid battery connector and
+  bulk capacitance. Removing the untested path reduced risk more than keeping it
+  did. **The same reasoning inverts for any long-duration or unattended system,
+  where the recovery path has to exist and therefore has to be tested.**
+
+  The watchdog was kept for an unrelated reason: it is the only thing that
+  catches a pre-launch hang. Because the buzzer plays from its own timer, a dead
+  main loop still *sounds* healthy, so a hang is otherwise invisible to the pad
+  crew. `wdt.feed()` is called outside the loop's try block, so a caught
+  exception is not misread as a hang.
+
+- **Six-face IMU calibration was implemented and then deliberately not used.**
+  In free fall the accelerometer bias is already absorbed by the pad reference:
+  `a_net = bias·û − g₀` cancels it algebraically. The residual benefit appears
+  only under significant attitude deviation, and works out to roughly 0.05 s of
+  apogee-detection accuracy — while a *badly performed* calibration silently
+  contaminates every downstream estimate and is worse than none. The tooling is
+  in the repository; the calibration file is not.
