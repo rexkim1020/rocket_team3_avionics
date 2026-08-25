@@ -1,6 +1,6 @@
-# anam7-avionics
+# TEAM3 Sounding rocket
 
-**Flight computer for the ANAM VII sounding rocket** — Korea University rocketry
+**Flight computer for the TEAM3 sounding rocket** — Korea University rocketry
 club, Team 3.
 
 ![MicroPython](https://img.shields.io/badge/MicroPython-1.28.0-2b2728)
