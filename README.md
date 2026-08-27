@@ -110,15 +110,17 @@ Single-stage, solid-propellant, recovered by parachute. The flight computer ride
 in a machined mount inside the airframe tube, which is why the board is circular
 rather than rectangular.
 
-<!--
-설계도 2장 — Fusion 로그인 후 아래 두 줄의 주석을 풀고 파일을 업로드하세요.
-
 ![Airframe assembly](docs/images/rocket-design.png)
-*Full assembly. The design section owned the airframe; the avionics bay and mount were mine.*
+
+*Full vehicle. Two avionics bays: the flight computer sits below the nose cone,
+with a second bay lower in the airframe. The design section owned the airframe;
+the avionics bay and mount were mine.*
 
 ![Avionics mount](docs/images/avionics-mount.png)
-*Avionics mount, my design. Locates the circular board concentrically in the tube.*
--->
+
+*Avionics mount, my design. The circular board seats concentrically in the tube
+and clamps against captive hex nuts; the side cutout passes the harness and
+gives access to the Pico's USB port with the vehicle assembled.*
 
 ![Avionics partially assembled](docs/images/assembly-1-avionics.jpg)
 
