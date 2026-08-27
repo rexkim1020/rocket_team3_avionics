@@ -7,6 +7,18 @@ club, Team 3.
 ![MCU](https://img.shields.io/badge/MCU-RP2040%20%C2%B7%20Pico-a22846)
 ![Flight](https://img.shields.io/badge/flight-deployment%20nominal-2ea44f)
 
+**Role — team lead (15 engineers) and control section lead.**
+
+I owned the flight computer end to end: board design, firmware, threshold
+derivation, ground-test tooling, and the post-flight anomaly investigation. I also
+designed the avionics mount.
+
+Outside the control section I prepared and extracted the propellant grains, and
+assembled the outsourced casing with the grains, snap rings and O-rings. **Motor
+design and performance specification were owned by the propulsion section, not by
+me.** The design section owned the airframe; my contribution there was iterative
+feedback on interfaces and revisions.
+
 A single-stage model rocket avionics stack on a Raspberry Pi Pico. It detects
 launch, decides when the vehicle reaches apogee, fires the parachute, logs the
 full flight to SD, and beacons its position over GPS for recovery. No radio
@@ -30,6 +42,11 @@ Flown once. Honest summary:
 | Recovery | **Failed** — high winds carried the vehicle into a drainage ditch |
 | Flight data | **None** — airframe and SD card were not recovered; only video |
 
+<!-- 발사 영상: README 웹 편집기에서 이 줄 위에 드래그앤드롭 -->
+
+*Launch and descent under canopy. With the airframe and SD card never recovered,
+this footage is the only direct evidence of the flight.*
+
 The deployment chain worked **despite** the GPS never getting a fix. That is the
 one result worth taking away from this project: apogee detection was built from
 three mutually independent detectors, so losing a subsystem did not compromise
@@ -44,7 +61,7 @@ Where that distinction matters, it is stated.
 
 ## What is actually interesting here
 
-Model rocket flight computers are a well-trodden exercise. Three aspects of this
+Model rocket flight computers are a well-trodden exercise. Four aspects of this
 one are less common, and are documented in detail below:
 
 1. **Verifying a one-shot system with no flight data.** There was exactly one
@@ -68,11 +85,80 @@ one are less common, and are documented in detail below:
    when to begin testing for the measured event.
    → [Deployment triggers](#deployment-triggers)
 
+4. **Interfaces designed around assembly and separation, not just contact.** The
+   arming switches are unreachable once the airframe is closed, so an external
+   rocker overrides them through a parallel MOSFET path. The launcher umbilicals
+   use magnetic pogo pins, chosen for near-zero separation force rather than for
+   contact quality.
+   → [Power and arming](#power-and-arming) · [Umbilical interface](#umbilical-interface)
+
 The vehicle was lost, so this repository is as much an anomaly report as a
 firmware release. The failure — a GNSS receiver desensed by a co-located digital
 subsystem, mitigated in firmware, and still insufficient at the launch site — is
 written up in full rather than omitted.
    → [Post-mortem](#post-mortem--known-issues)
+
+---
+
+## The vehicle
+
+Single-stage, solid-propellant, recovered by parachute. The flight computer rides
+in a machined mount inside the airframe tube, which is why the board is circular
+rather than rectangular.
+
+<!--
+설계도 2장 — Fusion 로그인 후 아래 두 줄의 주석을 풀고 파일을 업로드하세요.
+
+![Airframe assembly](docs/images/rocket-design.png)
+*Full assembly. The design section owned the airframe; the avionics bay and mount were mine.*
+
+![Avionics mount](docs/images/avionics-mount.png)
+*Avionics mount, my design. Locates the circular board concentrically in the tube.*
+-->
+
+![Avionics partially assembled](docs/images/assembly-1-avionics.jpg)
+
+*Flight computer going into the avionics mount.*
+
+![Nose cone and avionics](docs/images/assembly-2-nosecone.jpg)
+
+*Nose cone mated to the avionics assembly, with the parachute servo linkage and
+the umbilical cables dressed out.*
+
+![Airframe assembled](docs/images/assembly-3-airframe.jpg)
+
+*Nose cone, avionics and airframe tube assembled. At this point the onboard power
+switches are sealed inside — see [Power and arming](#power-and-arming).*
+
+### Motor
+
+The motor was designed and specified by the propulsion section. I prepared and
+extracted the propellant grains and assembled the casing, and ran the static
+firing that produced the trace below.
+
+![Static thrust curve](docs/images/thrust-curve.png)
+
+*Static fire, load cell logged at 77 Hz.*
+
+| | |
+|---|---|
+| Peak thrust | 193.9 N at T+1,113 ms |
+| Average thrust | 93.5 N |
+| Total impulse | 236.1 N·s — **H class** |
+| Recorded burn | 0 – 2,525 ms |
+
+Two numbers in the flight software come directly from this trace. The
+**T+2,525 ms** deployment inhibit is the end of the recorded burn, and the
+simulated apogee that sets the **T+9,000 ms** unconditional backstop is derived
+from this impulse and the vehicle mass.
+
+The reading had flattened near 14.7 N by the end of the trace rather than
+decaying to zero, which is more consistent with a residual load-cell offset than
+with real thrust. **The impulse figure should therefore be read as an upper
+bound**, and the burn-time gate as the point where the motor is no longer
+meaningfully accelerating the vehicle rather than where thrust reaches exactly
+zero. The class assignment holds comfortably either way.
+→ [Post-mortem 5](#5-load-cell-zero-offset-in-the-thrust-measurement)
 
 ---
 
@@ -88,11 +174,70 @@ written up in full rather than omitted.
 | Buzzer (TMB12A05 + 2N3904) | `GP20` (active high) |
 | Parachute servo | `GP26` (direct drive, non-inverting, 50 Hz PWM) |
 
+| Front | Back |
+|---|---|
+| ![Flight board, front](docs/images/board-front.jpg) | ![Flight board, back](docs/images/board-back.jpg) |
+
+*The assembled flight computer. The circular outline is sized to the airframe
+tube; sensor breakouts and the SD module sit on the top layer, with the umbilical
+and power connectors grouped on the lower edge where the harness exits.*
+
+Schematic and layout:
+[`hardware/schematic.pdf`](hardware/schematic.pdf) ·
+[`hardware/pcb.pdf`](hardware/pcb.pdf)
+
+**There is no ignition circuitry on this board.** The vehicle is single-stage and
+the only actuator is the parachute servo, driven directly — no relay, no
+optocoupler, no inversion to get wrong. That is a deliberately small safety
+surface, and it is part of why this firmware can afford to be aggressive about
+deploying on any one of three detectors: the worst thing an unexpected output can
+do is open the parachute.
+
 **Two independent power rails.** This split matters for fault diagnosis — several
 confusing failures turned out to be one rail being off:
 
 - **3.7 V** → Pico VSYS → internal 3.3 V → BMP388 · BNO055 · SD · pull-ups
 - **5 V** → GNSS · servo · buzzer
+
+### Power and arming
+
+Each rail has an onboard switch — J2 for 3.7 V, J1 for 5 V. Both become
+unreachable the moment the airframe is closed, which leaves an unpleasant choice:
+either power the vehicle up before assembly and then handle a live board through
+the whole build, or accept that it cannot be turned on once assembled.
+
+The board takes neither. An external rocker (`OUT_SWITCH`, P7) pulls a shared
+`REMOTE_ON` line to ground, driving the gates of P-channel MOSFETs that sit in
+parallel with each onboard switch — Q2 on the 3.7 V rail, Q3 and Q4 paralleled on
+5 V for lower on-resistance under servo load. 10 kΩ pull-ups hold both gates off
+by default, and a 1N4148 in each gate path keeps the two rail networks from
+back-feeding one another through the shared line.
+
+Either path energises either rail independently. The vehicle is assembled cold
+with the onboard switches off, carried to the pad inert, and brought up from
+outside the airframe by one rocker throw.
+
+### Umbilical interface
+
+Three umbilicals — a safety pin plus two launcher-tie cables — on GP17, GP18 and
+GP19, each pulled up to 3.3 V through 4.7 kΩ. The state machine will not accept a
+launch until all three read released.
+
+The two launcher-tie cables use **magnetic pogo-pin connectors**. The choice was
+about separation force rather than contact quality. A connector that has to be
+pulled apart at liftoff resists along the rail, and whatever it resists with comes
+out of the vehicle's acceleration and can pull it off its intended path. A
+magnetic pogo interface holds contact through spring pressure and releases at
+essentially zero force, while keeping a wiping contact that does not degrade the
+way a friction-fit header does after repeated mating.
+
+This was informed by the opposite problem on a different vehicle. On
+[ANAM-VII](https://github.com/rexkim1020/anam-vii-avionics), the second-stage
+umbilicals broke out to 2.54 mm pin headers; one went open-circuit during pad
+setup, the flight computer read it as launch, and the second stage ignited on the
+rail. That board's fix was to move to screw terminals — reliable contact, but a
+higher separation force and a manual step to get right. The pogo approach gets
+the contact reliability without paying for it in separation force.
 
 ---
 
@@ -203,6 +348,14 @@ integral deploys early. Detectors 1 and 3 stay live.
 
 Bench-measured drift was far below this: 0.02 m/s over 18 seconds at rest.
 
+### What it looks like
+
+![Parachute deployment ground test](docs/images/deployment-test.gif)
+
+*Ground deployment test. The servo releases, the nose cone separates and the
+canopy is drawn out; the servo re-locks 5 s later so it is not straining against
+a travel limit for the rest of the descent.*
+
 ---
 
 ## Audio status codes
@@ -309,6 +462,8 @@ stage_io.py        3-pin umbilical debounce → stage decision
 buzzer.py          Timer-driven pattern playback (allocation-free callback)
 servo_release.py   Parachute servo with automatic re-lock
 
+hardware/          Schematic and PCB layout (PDF, EasyEDA)
+docs/images/       Board and vehicle photography, thrust curve
 tools/             Ground test utilities (not required on the flight board)
 ```
 
@@ -412,6 +567,20 @@ all, and that is where the mission was lost.
 
 Future builds should carry recovery aids that do not depend on any electronics:
 high-visibility finish, streamers, and a louder landing beacon.
+
+### 5. Load-cell zero offset in the thrust measurement
+
+The static-fire trace does not return to zero — it flattens near 14.7 N, 7.6% of
+peak, and recording was stopped there on the judgement that the remainder was
+negligible. A solid motor tails off toward zero rather than asymptoting to a
+constant, so this is most likely a zero offset that appeared during the burn,
+from thermal drift or the mount settling under load.
+
+It matters because every derived figure inherits it. Integrated across 2.525 s an
+offset of that size accounts for roughly 35 N·s, so the 236.1 N·s total is an
+upper bound. The next static fire should re-zero after the burn and subtract the
+offset, and should record until the reading is genuinely flat at zero rather than
+until it looks small.
 
 ---
 
