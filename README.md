@@ -42,7 +42,11 @@ Flown once. Honest summary:
 | Recovery | **Failed** — high winds carried the vehicle into a drainage ditch |
 | Flight data | **None** — airframe and SD card were not recovered; only video |
 
-<!-- 발사 영상: README 웹 편집기에서 이 줄 위에 드래그앤드롭 -->
+
+
+https://github.com/user-attachments/assets/9bdc5b8e-13bc-4e4b-b4a7-bb61117ff043
+
+
 
 *Launch and descent under canopy. With the airframe and SD card never recovered,
 this footage is the only direct evidence of the flight.*
@@ -541,8 +545,9 @@ The standard MicroPython SPI driver fails to initialise 64 GB cards —
 `timeout waiting for v2 card`. CMD0 and CMD8 respond normally, so the wiring is
 sound; `ACMD41` simply never completes. The same card is healthy in a PC reader.
 
-**Use cards ≤ 32 GB.** A full flight log is about 2 MB, so capacity is not a
-consideration.
+**Use cards ≤ 32 GB.** The flight card was 8 GB, which initialised without
+issue. A full flight log is about 2 MB, so capacity was never a constraint —
+the 64 GB card was simply the one on hand at the time.
 
 ### 3. Servo holding current
 
