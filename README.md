@@ -243,6 +243,27 @@ rail. That board's fix was to move to screw terminals — reliable contact, but 
 higher separation force and a manual step to get right. The pogo approach gets
 the contact reliability without paying for it in separation force.
 
+### Parachute deployment mechanism
+
+The nose cone is hinged rather than ejected, and the hinge is **spring-loaded**.
+
+The hinged-cone approach is carried over from the ANAM-VII second stage, where
+the cone itself opened cleanly. What did not go cleanly was everything after
+that: the canopy came out but the shroud lines fouled, it never reached full
+inflation, and the vehicle was not slowed as intended. Opening the cone and
+deploying the parachute are not the same event, and the gap between them is
+where that flight was lost.
+
+Adapting the mechanism to a much smaller vehicle, the spring hinge targets that
+gap. A plain hinge opens only as far as the airstream and gravity carry it, and a
+light airframe has less of both. A spring drives the cone to full travel the
+moment the servo releases and keeps driving it open as the vehicle oscillates on
+descent, rather than letting it fall back — a wider aperture, and more agitation
+during the interval in which a partly fouled canopy either shakes free or does
+not.
+
+Reference design: [ANAM-VII](https://github.com/rexkim1020/anam-vii-avionics).
+
 ---
 
 ## Flight state machine
