@@ -42,11 +42,7 @@ Flown once. Honest summary:
 | Recovery | **Failed** — high winds carried the vehicle into a drainage ditch |
 | Flight data | **None** — airframe and SD card were not recovered; only video |
 
-
-
-https://github.com/user-attachments/assets/9bdc5b8e-13bc-4e4b-b4a7-bb61117ff043
-
-
+<!-- 발사 영상: README 웹 편집기에서 이 줄 위에 드래그앤드롭 -->
 
 *Launch and descent under canopy. With the airframe and SD card never recovered,
 this footage is the only direct evidence of the flight.*
@@ -112,24 +108,32 @@ rather than rectangular.
 
 ![Airframe assembly](docs/images/rocket-design.png)
 
-*Full vehicle. Two avionics bays: the flight computer sits below the nose cone,
-with a second bay lower in the airframe. The design section owned the airframe;
-the avionics bay and mount were mine.*
+*Full vehicle. The avionics stack occupies the section directly below the nose
+cone. The design section owned the airframe; the avionics bay and its mount were
+mine.*
 
 ![Avionics mount](docs/images/avionics-mount.png)
 
-*Avionics mount, my design. The circular board seats concentrically in the tube
-and clamps against captive hex nuts; the side cutout passes the harness and
-gives access to the Pico's USB port with the vehicle assembled.*
+*Avionics mount, my design. It anchors the lower end of the standoff stack and
+holds the 2S 18650 pack that feeds the UBEC. The rectangular cutout is the
+aperture for the external arming rocker; the narrow slot passes one of the two
+magnetic pogo umbilicals, with its pair 180° around. Placing them diametrically
+opposite means the two separation forces cancel — no net lateral force and no yaw
+torque at the moment the vehicle leaves the rail.*
 
 ![Avionics partially assembled](docs/images/assembly-1-avionics.jpg)
 
-*Flight computer going into the avionics mount.*
+*Flight computer going into the mount.*
 
-![Nose cone and avionics](docs/images/assembly-2-nosecone.jpg)
+![Avionics stack assembled](docs/images/assembly-2-nosecone.jpg)
 
-*Nose cone mated to the avionics assembly, with the parachute servo linkage and
-the umbilical cables dressed out.*
+*The assembled stack. Four brass standoffs run its full height, threading the
+nose-cone mount, the GNSS plate, the flight computer, the battery deck and the
+avionics mount into one rigid column — the mount I designed carries the lower
+four holes, the nose-cone mount the upper four. Flight loads pass through the
+standoffs rather than through the boards. The arming-rocker cutout and one of the
+two pogo slots are visible on the lower mount, and the sprung nose-cone hinge on
+the upper right.*
 
 ![Airframe assembled](docs/images/assembly-3-airframe.jpg)
 
@@ -199,11 +203,31 @@ surface, and it is part of why this firmware can afford to be aggressive about
 deploying on any one of three detectors: the worst thing an unexpected output can
 do is open the parachute.
 
+### Physical stack
+
+Everything mounts on four brass standoffs running the full height of the bay, so
+flight loads travel through the standoffs rather than through the boards. This is
+also why the PCB is circular: it is a structural member of the column, not a card
+in a slot.
+
+```
+nose-cone mount        sprung hinge, upper standoff anchor
+  │
+top plate              BE-220 GNSS  ← furthest deck from the SD interface
+  │
+flight computer        Pico · BMP388 · BNO055 · microSD
+  │
+battery deck           1 × 18650   → 3.7 V logic rail
+  │
+avionics mount         2 × 18650   → UBEC → 5 V actuator rail
+                       arming-rocker aperture, 2 × pogo umbilical slots
+```
+
 **Two independent power rails.** This split matters for fault diagnosis — several
 confusing failures turned out to be one rail being off:
 
-- **3.7 V** → Pico VSYS → internal 3.3 V → BMP388 · BNO055 · SD · pull-ups
-- **5 V** → GNSS · servo · buzzer
+- **3.7 V** → single 18650 → Pico VSYS → internal 3.3 V → BMP388 · BNO055 · SD · pull-ups
+- **5 V** → 2S 18650 → UBEC → GNSS · servo · buzzer
 
 ### Power and arming
 
@@ -249,12 +273,12 @@ the contact reliability without paying for it in separation force.
 
 The nose cone is hinged rather than ejected, and the hinge is **spring-loaded**.
 
-The hinged-cone approach is carried over from the ANAM-VII second stage, where
-the cone itself opened cleanly. What did not go cleanly was everything after
-that: the canopy came out but the shroud lines fouled, it never reached full
-inflation, and the vehicle was not slowed as intended. Opening the cone and
-deploying the parachute are not the same event, and the gap between them is
-where that flight was lost.
+The hinged-cone approach is carried over from the ANAM-VII second stage, where the
+cone itself opened cleanly. What did not go cleanly was everything after that: the
+canopy came out but the shroud lines fouled, it never reached full inflation, and
+the vehicle was not slowed as intended. Opening the cone and deploying the
+parachute are not the same event, and the gap between them is where that flight
+was lost.
 
 Adapting the mechanism to a much smaller vehicle, the spring hinge targets that
 gap. A plain hinge opens only as far as the airstream and gravity carry it, and a
@@ -263,6 +287,12 @@ moment the servo releases and keeps driving it open as the vehicle oscillates on
 descent, rather than letting it fall back — a wider aperture, and more agitation
 during the interval in which a partly fouled canopy either shakes free or does
 not.
+
+![Parachute deployment ground test](docs/images/deployment-test.gif)
+
+*Ground deployment test. The servo releases, the sprung hinge carries the cone to
+full travel and the canopy is drawn out; the servo re-locks 5 s later so it is not
+straining against a travel limit for the rest of the descent.*
 
 Reference design: [ANAM-VII](https://github.com/rexkim1020/anam-vii-avionics).
 
@@ -374,14 +404,6 @@ disables itself — that pattern means the integral has drifted, and a drifted
 integral deploys early. Detectors 1 and 3 stay live.
 
 Bench-measured drift was far below this: 0.02 m/s over 18 seconds at rest.
-
-### What it looks like
-
-![Parachute deployment ground test](docs/images/deployment-test.gif)
-
-*Ground deployment test. The servo releases, the nose cone separates and the
-canopy is drawn out; the servo re-locks 5 s later so it is not straining against
-a travel limit for the rest of the descent.*
 
 ---
 
@@ -557,10 +579,16 @@ noisy one.
 **It was not enough. No fix was ever acquired at the launch site**, and without
 coordinates the vehicle could not be located after it landed off-target.
 
-This is a layout problem being papered over in firmware. The correct fix is
-physical: move the GNSS antenna away from the SD module and its traces, and
-shield it. Any future revision of this board should treat antenna placement as a
-routing constraint, not an afterthought.
+Physical separation had already been attempted. The GNSS module sits on the top
+plate of the standoff stack, one deck above the flight computer and its SD
+interface — the largest separation the airframe diameter allowed. It was not
+enough, and that is the useful part of this result: distance alone does not close
+a 1575 MHz desense problem at these levels.
+
+The correct fix is still physical, but it has to be more than spacing: shield the
+receiver, or move the SD interface off the stack entirely. Any future revision of
+this board should treat antenna placement as a routing constraint from the start,
+not an afterthought.
 
 ### 2. 64 GB SDXC incompatibility
 
@@ -568,9 +596,9 @@ The standard MicroPython SPI driver fails to initialise 64 GB cards —
 `timeout waiting for v2 card`. CMD0 and CMD8 respond normally, so the wiring is
 sound; `ACMD41` simply never completes. The same card is healthy in a PC reader.
 
-**Use cards ≤ 32 GB.** The flight card was 8 GB, which initialised without
-issue. A full flight log is about 2 MB, so capacity was never a constraint —
-the 64 GB card was simply the one on hand at the time.
+**Use cards ≤ 32 GB.** The flight card was 8 GB and initialised without issue. A
+full flight log is about 2 MB, so capacity was never a constraint — the 64 GB card
+was simply the one on hand at the time.
 
 ### 3. Servo holding current
 
