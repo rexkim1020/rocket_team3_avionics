@@ -42,7 +42,11 @@ Flown once. Honest summary:
 | Recovery | **Failed** — high winds carried the vehicle into a drainage ditch |
 | Flight data | **None** — airframe and SD card were not recovered; only video |
 
-<!-- 발사 영상: README 웹 편집기에서 이 줄 위에 드래그앤드롭 -->
+
+
+https://github.com/user-attachments/assets/2114afc1-8ba1-4b09-9eee-3706c5bee618
+
+
 
 *Launch and descent under canopy. With the airframe and SD card never recovered,
 this footage is the only direct evidence of the flight.*
